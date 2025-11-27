@@ -166,13 +166,6 @@ class solid_spherical_particle:
         return self.position
 
 
-
-
-
-
-
-
-
 def Re_p(rho_fluid, vel_fluid, vel_particle, dia_particle, mu_fluid):
     
     Re_p = rho_fluid*abs(vel_fluid-vel_particle)*dia_particle/mu_fluid

@@ -50,46 +50,55 @@ class solid_spherical_particle:
     ])
     def __init__(self, diameter, density, initial_position, initial_velocity ): # these are the variables we need to create a particle!!
         # This is where we define the state variables
-        self.position = initial_position
-        self.velocity = initial_velocity
+        self.position = np.atleast_1d(np.array(initial_position, dtype=float))
+        self.velocity = np.atleast_1d(np.array(initial_velocity, dtype=float))
         self.time = 0
         self.diameter = diameter #meters
         self.density = density #kg/m3
         self.mass = (1/6)*math.pi*diameter**3*density #kg
     
     def calc_drag(self, rho_fluid, mu_fluid, vel_fluid):
-        # Correct area calculation
         area = math.pi * self.diameter**2 / 4
-        Re_p = self.calc_Re_p(rho_fluid, vel_fluid,mu_fluid)
+        vel_fluid = np.atleast_1d(np.array(vel_fluid, dtype=float))
+        
+        vel_rel = vel_fluid - self.velocity
+        vel_rel_mag = np.linalg.norm(vel_rel)
+        
+        Re_p = self.calc_Re_p(rho_fluid, vel_fluid, mu_fluid)
+        
         if Re_p < 0.01:
-            return 3*math.pi*mu_fluid*self.diameter*(vel_fluid-self.velocity)
+            return 3*math.pi*mu_fluid*self.diameter*vel_rel
         elif Re_p < 1:
             Cd = 24/Re_p
         elif Re_p < 1000:
             Cd = (24/Re_p)*(1+0.15*Re_p**(0.687))
-        elif Re_p < 10472.3881:  # Below drag crisis data range
-            # Newton regime
+        elif Re_p < 10472.3881:
             Cd = 0.44
-        elif Re_p <= 5576823.1232:  # Within drag crisis data range
-            # Use lookup table with logarithmic interpolation
+        elif Re_p <= 5576823.1232:
             Cd = np.interp(np.log10(Re_p), 
                           np.log10(self.Re_drag_crisis), 
                           self.Cd_drag_crisis)
-        else:  # Above drag crisis data range
-            # Post-crisis regime
+        else:
             Cd = 0.19
-        # Correct drag force
-        Fd = 0.5 * rho_fluid * area * Cd * abs(vel_fluid-self.velocity) * (vel_fluid-self.velocity)
+        
+        if vel_rel_mag > 0:
+            Fd = 0.5 * rho_fluid * area * Cd * vel_rel_mag * vel_rel
+        else:
+            Fd = np.zeros_like(vel_rel)
+        
         return Fd
 
     def calc_buoyancy(self, rho_f, g=9.81):
-        """Calculate buoyancy force"""
-        V_p = self.mass / self.density  # Particle volume
-        Fb = -rho_f * V_p * g  # Negative because upward
+        V_p = self.mass / self.density
+        ndim = len(self.velocity)
+        Fb = np.zeros(ndim)
+        Fb[-1] = rho_f * V_p * g
         return Fb
 
-    def gravity_force(self,g=9.81):
-        Fg = self.mass*g    
+    def gravity_force(self, g=9.81):
+        ndim = len(self.velocity)
+        Fg = np.zeros(ndim)
+        Fg[-1] = -self.mass * g
         return Fg
     
     def calc_total_force(self, rho_fluid, mu_fluid, vel_fluid, g=9.81):
@@ -105,9 +114,12 @@ class solid_spherical_particle:
     def update_position(self, dt):
         self.position = self.position + self.velocity * dt
 
-    def calc_Re_p(self, rho_fluid, vel_fluid,mu_fluid):
-        Re_p = rho_fluid*abs(vel_fluid-self.velocity)*self.diameter/mu_fluid
-        return (Re_p)
+    def calc_Re_p(self, rho_fluid, vel_fluid, mu_fluid):
+        vel_fluid = np.atleast_1d(np.array(vel_fluid, dtype=float))
+        vel_rel = vel_fluid - self.velocity
+        vel_rel_mag = np.linalg.norm(vel_rel)
+        Re_p = rho_fluid * vel_rel_mag * self.diameter / mu_fluid
+        return Re_p
 
     def get_position(self):
         return self.position
@@ -141,8 +153,9 @@ for i in range(max_iterations):
     particle.update_position(dt)
     
     # Check velocity change
-    if abs(particle.get_velocity() - prev_velocity) < tolerance:
-        print(f"Terminal velocity: {particle.get_velocity():.6f} m/s")
+    vel_diff = np.linalg.norm(particle.get_velocity() - prev_velocity)
+    if vel_diff < tolerance:
+        print(f"Terminal velocity: {np.linalg.norm(particle.get_velocity()):.6f} m/s")
         break
     
-    prev_velocity = particle.get_velocity()
+    prev_velocity = particle.get_velocity().copy()
