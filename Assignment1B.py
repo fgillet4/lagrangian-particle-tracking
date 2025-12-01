@@ -44,7 +44,7 @@ simVer = "bubbleColumn"
 plt.close("all")
 #To create a directory and store the relevant post-processed files
 #the file path is --> 'your run directory'/TME160/bubbleColumn
-ppPath = os.path.dirname(os.path.dirname(__file__)) + "/TME160/" + simVer
+# ppPath = os.path.dirname(os.path.dirname(__file__)) + "/TME160/" + simVer
 #Make directory  if it already doesn't exist
 if not os.path.exists(ppPath):
     os.makedirs(ppPath)
@@ -166,9 +166,9 @@ L = 3.0 #domain length along y-dir (m)
 
 #Physical properties
 #Continous phase: Water @20 deg
-rhoL = 1000.0 #density of water (kg/m3)
-mul = 0.001 #dynamic viscosity of water (Pa.s)
-sig = 0.073 #surface tension
+rhoL = 1267.0 #density of water (kg/m3)
+mul = 0.00103438 #dynamic viscosity of water (Pa.s)
+sig = 0.0632438 #surface tension
 
 #Dispersed phase: Air @20 deg
 meanDia = 0.0058 #mean bubble diameter (m)
@@ -219,6 +219,10 @@ bubbleXpos = np.zeros([n_timeSteps,n_tot_bubbles]) #time along with corresp. bub
 bubbleYpos = np.zeros([n_timeSteps,n_tot_bubbles]) #time along with corresp. bubble y-positions 
 bubbleVelXdir = np.zeros([n_timeSteps,n_tot_bubbles]) #time along with corresp. bubble x-velocities 
 bubbleVelYdir = np.zeros([n_timeSteps,n_tot_bubbles]) #time along with corresp. bubble y-velocities
+
+# Arrays to store history forces for each bubble and each timestep
+FhistY = np.zeros([n_timeSteps, n_tot_bubbles])   # history force in Y
+FhistX = np.zeros([n_timeSteps, n_tot_bubbles])   # history force in X
 
 #Initialize 1-D arrays with bubble injection related properties
 bubbleDia = np.zeros([n_tot_bubbles]) #array with diameters of all injected bubbles
@@ -271,20 +275,22 @@ for t in times:
         
         #Calculate relative velocity between bubble and the surrounding fluid
         #TODO: must be filled
-        if D > 1.3e-3:
-            Vrel = np.sqrt(2*sig/(rhoL*D)+ (rhoL-rhoB)*g*D/(2*rhoL))
-        else:
-            Vrel = Vy - vBubble  #relative velocity along y-direction
-        Re = rhoL*abs(Vrel)*D/mul   #Reynolds number
+        Vrel = vBubble - Vy #relative velocity along y-direction
+        Re = rhoL*np.sqrt(Vrel**2+uBubble**2)*D/mul   #Reynolds number
         Eo = (rhoL-rhoB)*g*D**2/sig   #Eotvos number
         beta = 1
         Cd = beta*max(min(16/Re*(1+0.15*Re**0.687),48/Re),8/3*Eo/(Eo+4))  #drag coefficient
         
         #Calculate the forces on the bubble along the y-direction
         #TODO: must be filled
-        Fb = (rhoL - rhoB) * (4/3*np.pi*(D/2)**3) * g
-        Fdy = 0.5 * rhoL * Cd * np.pi*D**2/4 * abs(Vrel)*(Vrel)
+        omega = np.array([0, 0, dVdx])
+        Vrel_vec = np.array([0, Vrel, 0])
+        cross_prod = np.cross(Vrel_vec,omega)
+        Fb = rhoL * (4/3*np.pi*(D/2)**3) * g
+        Fdy = 0.5 * rhoL * Cd * np.pi*D**2/4 * np.sqrt(Vrel**2+uBubble**2)*(Vrel)
+        Fp = massBubble*rhoL/rhoB*(-g)
         Fg = massBubble*g
+        # FLy = -Cl*rhoL*(np.pi*D**3)/6*(vBubble-Vy)*cross_prod[1]
 
 
         #Store time index when bubble is injected: used for computing the history force
@@ -296,10 +302,10 @@ for t in times:
             Fhist = mhist*Vrel/np.sqrt(0.5*(t-injTime))
         else:
             Fhist = 0
+        FhistY[ti, bubbleID] = Fhist
         
         #TODO: must be filled
-        FtotY = Fb - Fdy - Fhist - Fg     #total force on the bubble along y-direction
-        print(FtotY)
+        FtotY = Fb + Fp*0 - Fdy - Fhist - Fg    #total force on the bubble along y-direction
         totMass = massBubble+(0.5*rhoL*(4/3*np.pi*(D/2)**3))   #total mass of the bubble + mass of the fluid carried by the bubble
         
         #Calculate bubble y-velocity at the new time-index ti+1: Forward Euler
@@ -321,10 +327,22 @@ for t in times:
         
         #Calculate the forces on the bubble along x-direction
         #TODO: must be filled
-        FT = -Cl*rhoL*(np.pi*D**3)/6*(vBubble-Vy)*dVdx       
-        Fdx =  -0.5*rhoL*Cd*(np.pi*D**2/4)*abs(uBubble)*(uBubble)
+        #Store time index when bubble is injected: used for computing the history force
+        injectionTimeIndex = np.where(bubbleXpos[:,bubbleID] > 0.0)[0][0]
+        #the history force Fhist is computed for you as:
+        injTime = times[injectionTimeIndex]
+        if (t-injTime) > 0.0:
+            mhist = np.sqrt(rhoL*mul*np.pi)*massBubble/(rhoB*D)
+            Fhist_x = mhist*(-uBubble)/np.sqrt(0.5*(t-injTime))
+        else:
+            Fhist_x = 0
+        FhistX[ti, bubbleID] = Fhist_x
 
-        FtotX = FT + Fdx #total force on the bubble along x-direction
+        
+        FLx = -Cl*rhoL*(np.pi*D**3)/6*(vBubble-Vy)*cross_prod[0]      
+        Fdx =  0.5*rhoL*Cd*(np.pi*D**2/4)*np.sqrt(Vrel**2+uBubble**2)*(uBubble)
+
+        FtotX = FLx - Fdx - Fhist_x #total force on the bubble along x-direction
         
         #Calculate bubble x-velocity at the new time-index ti+1: Forward Euler
         #TODO: must be filled
@@ -349,19 +367,19 @@ for t in times:
         
     #update time index (go to the next timestep)
     ti=ti+1
-    #add a simulation log
-    log.writerow([
-        t, bubbleID,
-        bubbleXpos[ti, bubbleID],
-        bubbleYpos[ti, bubbleID],
-        uBubble, vBubble,
-        D,
-        Vrel, Re, Cd,
-        Fb, Fdy, Fhist, FtotY,
-        FT, Fdx, FtotX
-    ])
+#     #add a simulation log
+#     log.writerow([
+#         t, bubbleID,
+#         bubbleXpos[ti, bubbleID],
+#         bubbleYpos[ti, bubbleID],
+#         uBubble, vBubble,
+#         D,
+#         Vrel, Re, Cd,
+#         Fb, Fdy, Fhist, FtotY,
+#         FT, Fdx, FtotX
+#     ])
     
-logfile.close()
+# logfile.close()
 
     
 """
@@ -402,9 +420,9 @@ avVoidFracArea2 = np.zeros([n_timeSteps,int(binsInXdir)]) #@y = 1.0m
 avVoidFracArea3 = np.zeros([n_timeSteps,int(binsInXdir)]) #@y = 2.0m
 
 for i in range(n_timeSteps):
-    avVoidFracArea1[i,:] = areaAverageVoidFractionWithinBounds(0.3,0.3-dy,binsInXdir,i,b)
-    avVoidFracArea2[i,:]  = areaAverageVoidFractionWithinBounds(1,1-dy,binsInXdir,i,b)
-    avVoidFracArea3[i,:]  = areaAverageVoidFractionWithinBounds(2,2-dy,binsInXdir,i,b)
+    avVoidFracArea1[i,:] = areaAverageVoidFractionWithinBounds(0.1,0.1-dy,binsInXdir,i,b)
+    avVoidFracArea2[i,:]  = areaAverageVoidFractionWithinBounds(3/2,3/2-dy,binsInXdir,i,b)
+    avVoidFracArea3[i,:]  = areaAverageVoidFractionWithinBounds(3,3-dy,binsInXdir,i,b)
     
     
 #time averaging
@@ -423,7 +441,7 @@ plt.plot(x_pos_bins,timeAverageOverBins2,'-*')
 plt.plot(x_pos_bins,timeAverageOverBins3,'-*')
 plt.xlabel('x-pos')
 plt.ylabel('time av void fraction')
-plt.legend(['y = 0.3m','y = 1.0m','y = 2.0m'])
+plt.legend(['y = 0.1m','y = 1.5m','y = 3.0m'])
 plt.grid(True)
 figName = "Area averaged void fraction.png"
 plt.savefig(os.path.join(ppPath, figName), dpi=250, bbox_inches='tight')
@@ -445,3 +463,28 @@ figName = "Bubble pos at a given time instant.png"
 plt.savefig(os.path.join(ppPath, figName), dpi=250, bbox_inches='tight')
 plt.show()
 
+# Figure 4
+# History force plot
+bubblesToPlot = [7, 36, 70]
+
+plt.figure(figsize=(7,5))
+for bID in bubblesToPlot:
+    plt.plot(times, FhistX[:, bID], label=f'Bubble {bID}')
+plt.xlabel('Time [s]')
+plt.ylabel('History force $F_{hist}$ x-direction [N]')
+plt.grid(True)
+plt.legend()
+plt.title('History force vs time for selected bubbles')
+plt.savefig(os.path.join(ppPath, "HistoryForceX.png"), dpi=250)
+plt.show()
+
+plt.figure(figsize=(7,5))
+for bID in bubblesToPlot:
+    plt.plot(times, FhistY[:, bID], label=f'Bubble {bID}')
+plt.xlabel('Time [s]')
+plt.ylabel('History force $F_{hist}$ y-direction [N]')
+plt.grid(True)
+plt.legend()
+plt.title('History force vs time for selected bubbles')
+plt.savefig(os.path.join(ppPath, "HistoryForceY.png"), dpi=250)
+plt.show()
